@@ -48,14 +48,22 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ session, messages,
             {/* Messages */}
             <div className="flex-1 overflow-y-auto flex flex-col gap-4 p-2">
                 {messages.map((msg) => (
-                    <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                        <div className={`
-                            max-w-[70%] p-3 border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]
-                            ${msg.role === "user" ? "bg-white" : "bg-blue-100"}
-                        `}>
-                            <div className="text-sm">{msg.content}</div>
+                    msg.role === "system" ? (
+                        <div key={msg.id} className="flex justify-center my-2">
+                            <span className="text-red-600 font-bold font-mono text-sm uppercase tracking-widest border-y-2 border-red-600 py-1 px-4">
+                                [{msg.content.replace(/^GAME OVER: /, "GAME OVER: ")}]
+                            </span>
                         </div>
-                    </div>
+                    ) : (
+                        <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                            <div className={`
+                                max-w-[70%] p-3 border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]
+                                ${msg.role === "user" ? "bg-white" : "bg-blue-100"}
+                            `}>
+                                <div className="text-sm">{msg.content}</div>
+                            </div>
+                        </div>
+                    )
                 ))}
             </div>
 

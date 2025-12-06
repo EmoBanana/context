@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Lobby } from "@/components/Lobby";
@@ -18,8 +18,17 @@ export default function Home() {
     typeof api?.mutations?.startSession === "object";
 
   // Safe fallbacks when the Convex client hasn't been generated yet.
-  const user = isRealApi ? useQuery(api.queries.getMyUser) : null;
-  const items = isRealApi ? useQuery(api.queries.getItems) || [] : [];
+  const user = useQuery(api.queries.getMyUser, isRealApi ? {} : "skip");
+  const items = useQuery(api.queries.getItems, isRealApi ? {} : "skip") || [];
+  
+  const ensureUser = isRealApi ? useMutation(api.mutations.ensureUser) : async () => null;
+
+  // Auto-init user for dev
+  useEffect(() => {
+    if (isRealApi && ensureUser) {
+        ensureUser({ username: "Scammer" }).catch(e => console.error("Auto-user init failed", e));
+    }
+  }, [isRealApi]); // Run once when API is ready
 
   const generateTarget = isRealApi
     ? useAction(api.actions.generateNewTarget)
@@ -34,15 +43,14 @@ export default function Home() {
     ? useAction(api.actions.sendChatMessage)
     : async () => null;
 
-  // Chat Data (Only if in chat)
-  const messages =
-    isRealApi && activeSessionId
-      ? useQuery(api.queries.getMessages, { sessionId: activeSessionId as any }) || []
-      : [];
-  const session =
-    isRealApi && activeSessionId
-      ? useQuery(api.queries.getSession, { sessionId: activeSessionId as any })
-      : null;
+  // Chat Data (Unconditional hooks with skip pattern)
+  const messages = useQuery(api.queries.getMessages, 
+    (isRealApi && activeSessionId) ? { sessionId: activeSessionId as any } : "skip"
+  ) || [];
+  
+  const session = useQuery(api.queries.getSession, 
+    (isRealApi && activeSessionId) ? { sessionId: activeSessionId as any } : "skip"
+  );
 
   // Handlers
   const handleStartChat = async (urlOrText: string) => {
@@ -64,7 +72,10 @@ export default function Home() {
 
   const handleSendMessage = async (text: string) => {
     if (activeSessionId) {
-        await sendMessage({ sessionId: activeSessionId as any, content: text });
+        const result = await sendMessage({ sessionId: activeSessionId as any, content: text });
+        if (result && result.reasoning) {
+            console.log("🤖 AI Reasoning:", result.reasoning);
+        }
     }
   };
 

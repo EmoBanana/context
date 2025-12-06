@@ -2,15 +2,26 @@
 import { internalAction } from "./_generated/server";
 import { v } from "convex/values";
 import Groq from "groq-sdk";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { 
+  GoogleGenerativeAI, 
+  HarmCategory, 
+  HarmBlockThreshold 
+} from "@google/generative-ai";
 
 // Initialize clients
-// Note: Ensure GROQ_API_KEY and GOOGLE_API_KEY are set in Convex Dashboard
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
 });
 
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY || "");
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "");
+
+// ⚠️ CRITICAL: Disable safety filters so the AI allows "Scam Simulation" roleplay
+const SAFETY_SETTINGS = [
+  { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+];
 
 export const getGroqChat = internalAction({
   args: {
@@ -34,7 +45,7 @@ export const getGroqChat = internalAction({
     ];
 
     const completion = await groq.chat.completions.create({
-      messages: messages as any, // Type casting for simplicity
+      messages: messages as any,
       model: "llama-3.1-8b-instant",
       temperature: 0.8,
     });
@@ -53,19 +64,12 @@ export const getGeminiJudge = internalAction({
     ),
   },
   handler: async (ctx, args) => {
+    // ⚠️ CHANGED: Use the correct API string. 
+    // If 'gemini-2.0-flash-exp' fails, fallback to 'gemini-1.5-flash'
     const model = genAI.getGenerativeModel({
-      model: "gemini-2.0-flash-exp", // Using flash-exp or flash as requested (gemini-2.5-flash mentioned in prompt, assuming 2.0 or 1.5 flash equivalent available, will use generic flash or best match)
-      // Note: Prompt asked for "gemini-2.5-flash", which might not exist yet. I'll use "gemini-1.5-flash" or similar available model. 
-      // Actually prompt explicitly says "gemini-2.5-flash". I will use string "gemini-2.5-flash" but fallback to 1.5-flash if needed. 
-      // I'll stick to a standard known model for stability if 2.5 is hypothetical, but I'll use the string provided.
-      // Wait, "thinkingBudget: 1024" implies a reasoning model. "gemini-2.0-flash-thinking-exp" might be what is intended or similar.
-      // I will use "gemini-1.5-flash" for now as it's stable, or "gemini-2.0-flash-exp" if available.
-      // I'll put "gemini-1.5-flash" to be safe, but note the requirement.
+      model: "gemini-2.5-flash", 
+      safetySettings: SAFETY_SETTINGS, // <--- ADDED
     });
-
-    // Actually, "gemini-2.5-flash" might be a typo for 1.5 or 2.0. I'll use "gemini-1.5-flash" for reliability.
-    // Re-reading: "gemini-2.5-flash (Reasoning)". Maybe it means 2.0 Flash Thinking?
-    // I'll just use "gemini-1.5-flash" but configure it for JSON output.
 
     const historyText = args.chatHistory
       .map((msg) => `${msg.role}: ${msg.content}`)
@@ -95,12 +99,15 @@ export const getGeminiJudge = internalAction({
     
     const response = result.response;
     const text = response.text();
+    // No explicit server-side console log here to keep logs clean,
+    // we return it to the caller instead.
     
     try {
-        return JSON.parse(text);
+        const parsed = JSON.parse(text);
+        return { ...parsed, rawReasoning: text }; // Include raw reasoning
     } catch (e) {
         console.error("Failed to parse Gemini response", text);
-        return { verdict: "CONTINUE", trustChange: 0, systemMessage: "Error analyzing chat." };
+        return { verdict: "CONTINUE", trustChange: 0, systemMessage: "Error analyzing chat.", rawReasoning: text };
     }
   },
 });
@@ -110,7 +117,11 @@ export const getGeminiPersonaGenerator = internalAction({
     profileData: v.string(),
   },
   handler: async (ctx, args) => {
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    // ⚠️ CHANGED: Use the correct API string
+    const model = genAI.getGenerativeModel({ 
+        model: "gemini-2.5-flash",
+        safetySettings: SAFETY_SETTINGS, // <--- ADDED
+    });
 
     const prompt = `
       Create a detailed victim persona for a social engineering simulation game based on the following data:
@@ -144,4 +155,3 @@ export const getGeminiPersonaGenerator = internalAction({
     return JSON.parse(text);
   },
 });
-

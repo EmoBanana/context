@@ -41,11 +41,15 @@ export const generateNewTarget = action({
         console.error("Apify failed", e);
       }
     }
+    
+    console.log("Scraped Data (Apify):", rawData);
 
     // Step B: Gemini Persona Generator
     const personaData = await ctx.runAction(internal.ai.getGeminiPersonaGenerator, {
       profileData: rawData,
     });
+    
+    console.log("Generated Persona (Gemini):", personaData);
 
     // Step C: Write to DB
     const personaId = await ctx.runMutation(internal.internal.createPersona, {
@@ -101,7 +105,7 @@ export const sendChatMessage = action({
             role: "system",
             content: `GAME OVER: ${judgeResult.systemMessage || "You have been blocked."}`,
         });
-        return;
+        return { reasoning: judgeResult.rawReasoning }; // Return reasoning even on failure
     }
 
     // B. Chat (Groq) - Victim response
@@ -122,6 +126,8 @@ export const sendChatMessage = action({
         sessionId: args.sessionId,
         trustChange: judgeResult.trustChange,
     });
+    
+    return { reasoning: judgeResult.rawReasoning };
   }
 });
 
