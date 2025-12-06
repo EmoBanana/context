@@ -1,0 +1,10 @@
+{
+  "actorSpecification": 1,
+  "name": "context-profile-scraper",
+  "title": "Context Game Profile Scraper",
+  "description": "Scrapes a URL to generate a victim profile for the game.",
+  "version": "1.0",
+  "input": "./input_schema.json",
+  "dockerfile": "./Dockerfile"
+}
+

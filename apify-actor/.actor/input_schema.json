@@ -1,0 +1,16 @@
+{
+    "title": "Input Schema",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+        "startUrls": {
+            "title": "Start URLs",
+            "type": "array",
+            "description": "URLs to scrape for profile data.",
+            "editor": "requestListSources",
+            "prefill": [{ "url": "https://example.com" }]
+        }
+    },
+    "required": ["startUrls"]
+}
+
