@@ -1,0 +1,9 @@
+apify-actor
+coverage
+.DS_Store
+.env.local
+.env
+node_modules
+.next
+.git
+.cursor
