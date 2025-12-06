@@ -84,6 +84,7 @@ export const startSession = mutation({
       fundScammed: 0,
       trustLevel: persona.startingTrust,
       startTime: Date.now(),
+      messages: [], // Initialize empty messages array
     });
 
     return sessionId;
@@ -138,15 +139,17 @@ export const buyItem = mutation({
 export const endSession = mutation({
   args: {
     sessionId: v.id("sessions"),
+    finalAmount: v.optional(v.number()), // <--- New Argument
   },
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
     if (!session) throw new Error("Session not found");
     if (session.status !== "active") return;
 
+    // ... (auth logic) ...
     const identity = await ctx.auth.getUserIdentity();
     let tokenIdentifier = identity?.tokenIdentifier;
-    if (!tokenIdentifier) tokenIdentifier = "guest_user_123"; // Dev fallback
+    if (!tokenIdentifier) tokenIdentifier = "guest_user_123"; 
 
     const user = await ctx.db
       .query("users")
@@ -155,10 +158,7 @@ export const endSession = mutation({
 
     if (!user) throw new Error("User not found");
     
-    // Verify user owns session? (Optional security check)
-    if (session.userId !== user._id) {
-       // In strict mode we'd throw, but for dev fallback consistency we'll allow if it matches logic
-    }
+    // ...
 
     const persona = await ctx.db.get(session.personaId);
     if (!persona) throw new Error("Persona not found");
@@ -168,10 +168,28 @@ export const endSession = mutation({
 
     if (session.trustLevel > 80) {
       newStatus = "completed";
-      payout = persona.maxScamValue;
+      // Logic: Use finalAmount if provided and > 0, otherwise maxScamValue
+      // But also cap it at maxScamValue to prevent abuse?
+      // Or let the user scam MORE if they negotiated well? 
+      // Let's cap at maxScamValue unless the AI really messed up.
+      // For now: If finalAmount is provided, use it. If it's 0 or null, use maxScamValue.
+      
+      const askedAmount = args.finalAmount || 0;
+      if (askedAmount > 0) {
+          payout = Math.min(askedAmount, persona.maxScamValue); // Cap it at persona limit
+      } else {
+          payout = persona.maxScamValue; // Default to full wallet
+      }
+      
     } else if (session.trustLevel > 50) {
       newStatus = "completed";
-      payout = persona.maxScamValue * (session.trustLevel / 100);
+      // Partial success logic
+      const askedAmount = args.finalAmount || 0;
+      if (askedAmount > 0) {
+          payout = Math.min(askedAmount, persona.maxScamValue * 0.5);
+      } else {
+          payout = persona.maxScamValue * (session.trustLevel / 100);
+      }
     }
 
     await ctx.db.patch(args.sessionId, {
@@ -179,6 +197,8 @@ export const endSession = mutation({
       fundScammed: payout,
       endTime: Date.now(),
     });
+    
+    // ... (update user balance) ...
 
     if (payout > 0) {
       await ctx.db.patch(user._id, {

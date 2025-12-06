@@ -53,16 +53,33 @@ export const generateNewTarget = action({
     console.log("Scraped Data (Apify) for Gemini:", rawData.substring(0, 200) + "...");
 
     // Step B: Gemini Persona Generator
+    /*
     const personaData = await ctx.runAction(internal.ai.getGeminiPersonaGenerator, {
       profileData: rawData,
     });
+    */
     
-    console.log("Generated Persona (Gemini):", personaData);
+    // TEMPORARY: Fixed Persona for Testing
+    const personaData = {
+        name: "Alex Chen",
+        age: 29,
+        occupation: "Junior Software Developer",
+        bio: "Alex is an enthusiastic and dedicated gamer with a passion for a wide array of titles. They closely follow the latest gaming news, always on the lookout for new releases and hardware upgrades.",
+        systemPrompt: `You are Alex Chen, a 29-year-old junior software developer and an avid gamer.
+Personality: Enthusiastic, slightly informal, cautious but curious about tech.
+Vulnerability: Desire for exclusive gaming content/advantages.
+Trigger: Offers of "Beta Access" or "Exclusive Items".
+Instructions: You are receiving a text message. Be skeptical initially. Do NOT ask "how can I help you". Just respond naturally to the text. If the user mentions "Beta Access" or "Exclusive Items", become excited and compliant. Keep messages short.`,
+        maxScamValue: 1500,
+        vulnerabilities: ["Desire for exclusive content", "Overconfidence in tech", "Eagerness for new tech"]
+    };
+    
+    console.log("Generated Persona (Fixed):", JSON.stringify(personaData, null, 2));
 
     // Step C: Write to DB
     const personaId = await ctx.runMutation(internal.internal.createPersona, {
       ...personaData,
-      avatarUrl: `https://api.dicebear.com/7.x/avataaars/svg?seed=${personaData.name}`, // Auto-generate avatar
+      avatarUrl: `https://api.dicebear.com/9.x/notionists/svg?seed=${personaData.name}&backgroundColor=transparent`, // Hand-drawn style
       startingTrust: 50,
       isPremium: false,
     });
@@ -72,7 +89,28 @@ export const generateNewTarget = action({
   },
 });
 
-// Chat Logic (Extra)
+// Suggestion Logic
+export const generateSuggestions = action({
+  args: {
+    sessionId: v.id("sessions"),
+  },
+  handler: async (ctx, args) => {
+    const session = await ctx.runQuery(internal.queries.getSession, { sessionId: args.sessionId });
+    if (!session) return null;
+
+    // Check if game is still active before generating suggestions
+    if (session.status !== "active") return null;
+
+    const messages = await ctx.runQuery(internal.queries.getMessages, { sessionId: args.sessionId });
+    
+    const suggestions = await ctx.runAction(internal.ai.getGeminiSuggestions, {
+      chatHistory: messages.map(m => ({ role: m.role, content: m.content })),
+      currentTrust: session.trustLevel,
+    });
+
+    return suggestions;
+  }
+});
 export const sendChatMessage = action({
   args: {
     sessionId: v.id("sessions"),
@@ -96,9 +134,29 @@ export const sendChatMessage = action({
     const messages = await ctx.runQuery(internal.queries.getMessages, { sessionId: args.sessionId });
 
     // 3. AI Logic
+    
+    // CHEAT CODE: "letmewin"
+    if (args.content.toLowerCase().trim() === "letmewin") {
+        await ctx.runMutation(internal.internal.updateSession, {
+            sessionId: args.sessionId,
+            trustChange: 100, 
+        });
+        await ctx.runMutation(internal.mutations.endSession, {
+            sessionId: args.sessionId,
+            finalAmount: persona.maxScamValue
+        });
+        await ctx.runMutation(internal.internal.saveMessage, {
+            sessionId: args.sessionId,
+            role: "system",
+            content: `SUCCESS: [CHEAT ACTIVATED] Target has paid! (Amount: ${persona.maxScamValue})`,
+        });
+        return { reasoning: "Cheat code activated." };
+    }
+
     // A. Judge (Gemini) - Analyze user's move
     const judgeResult = await ctx.runAction(internal.ai.getGeminiJudge, {
         chatHistory: messages.map(m => ({ role: m.role, content: m.content })),
+        currentTrust: session.trustLevel, // Pass the current trust level
     });
 
     if (judgeResult.verdict === "GAME_OVER") {
@@ -107,13 +165,37 @@ export const sendChatMessage = action({
             trustChange: judgeResult.trustChange,
             status: "failed"
         });
-        // We might want to send a "System" message saying game over
+        
+        // Clean up the system message (remove brackets if they exist) to avoid double brackets
+        const rawMsg = judgeResult.systemMessage || "You have been blocked";
+        const cleanMsg = rawMsg.replace(/^\[|\]$/g, "");
+
         await ctx.runMutation(internal.internal.saveMessage, {
             sessionId: args.sessionId,
             role: "system",
-            content: `GAME OVER: ${judgeResult.systemMessage || "You have been blocked."}`,
+            content: `GAME OVER: ${cleanMsg} Game Over.`,
         });
-        return { reasoning: judgeResult.rawReasoning }; // Return reasoning even on failure
+        return { reasoning: judgeResult.rawReasoning };
+    } else if (judgeResult.verdict === "SUCCESS") {
+        // Success condition! Max trust/payout
+        // Update trust first so endSession sees high trust
+        await ctx.runMutation(internal.internal.updateSession, {
+            sessionId: args.sessionId,
+            trustChange: 100, // Max out trust to ensure payout
+        });
+        
+        // Trigger payout (This handles status update to "completed" and fund transfer)
+        await ctx.runMutation(internal.mutations.endSession, {
+            sessionId: args.sessionId,
+            finalAmount: judgeResult.agreedAmount || 0 // Pass the amount from the judge
+        });
+        
+        await ctx.runMutation(internal.internal.saveMessage, {
+            sessionId: args.sessionId,
+            role: "system",
+            content: `SUCCESS: ${judgeResult.systemMessage || "Target has paid!"} (Amount: ${judgeResult.agreedAmount || "Max"})`,
+        });
+        return { reasoning: judgeResult.rawReasoning };
     }
 
     // B. Chat (Groq) - Victim response
@@ -134,6 +216,16 @@ export const sendChatMessage = action({
         sessionId: args.sessionId,
         trustChange: judgeResult.trustChange,
     });
+
+    // Save System Message (Vibe) if it's not game over/success
+    // We only save it if there IS a system message to show
+    if (judgeResult.systemMessage) {
+        await ctx.runMutation(internal.internal.saveMessage, {
+            sessionId: args.sessionId,
+            role: "system",
+            content: `[${judgeResult.systemMessage}]`,
+        });
+    }
     
     return { reasoning: judgeResult.rawReasoning };
   }

@@ -11,6 +11,7 @@ import { ChatInterface } from "@/components/ChatInterface";
 export default function Home() {
   const [view, setView] = useState<"lobby" | "store" | "chat">("lobby");
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<{good: string, bad: string} | null>(null);
 
   const isRealApi =
     typeof api?.queries?.getMyUser === "object" &&
@@ -32,6 +33,9 @@ export default function Home() {
 
   const generateTarget = isRealApi
     ? useAction(api.actions.generateNewTarget)
+    : async () => null;
+  const generateSuggestions = isRealApi
+    ? useAction(api.actions.generateSuggestions)
     : async () => null;
   const startSession = isRealApi
     ? useMutation(api.mutations.startSession)
@@ -72,10 +76,16 @@ export default function Home() {
 
   const handleSendMessage = async (text: string) => {
     if (activeSessionId) {
+        setSuggestions(null); // Clear previous suggestions
         const result = await sendMessage({ sessionId: activeSessionId as any, content: text });
         if (result && result.reasoning) {
             console.log("🤖 AI Reasoning:", result.reasoning);
         }
+        // Generate new suggestions after AI replies
+        // We catch error so it doesn't break the flow if suggestions fail
+        generateSuggestions({ sessionId: activeSessionId as any })
+            .then((s) => setSuggestions(s as any))
+            .catch((e) => console.error("Failed to generate suggestions", e));
     }
   };
 
@@ -102,6 +112,7 @@ export default function Home() {
           <ChatInterface 
               session={session} 
               messages={messages as any} 
+              // suggestions={suggestions} // Disabled for demo
               onSendMessage={handleSendMessage} 
               onBack={() => setView("lobby")} 
           />

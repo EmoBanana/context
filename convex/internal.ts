@@ -12,6 +12,7 @@ export const createPersona = internalMutation({
     maxScamValue: v.number(),
     startingTrust: v.number(),
     isPremium: v.boolean(),
+    vulnerabilities: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
     return await ctx.db.insert("personas", args);
@@ -25,7 +26,33 @@ export const saveMessage = internalMutation({
     content: v.string(),
   },
   handler: async (ctx, args) => {
-    await ctx.db.insert("messages", args);
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) throw new Error("Session not found");
+
+    // 1. Prepare new message object
+    const newMessage = {
+        role: args.role,
+        content: args.content,
+        timestamp: Date.now()
+    };
+
+    // 2. Prepare transcript line
+    let speakerName = "User";
+    if (args.role === "assistant") {
+        const persona = await ctx.db.get(session.personaId);
+        speakerName = persona?.name || "Target";
+    } else if (args.role === "system") {
+        speakerName = "System";
+    }
+    const newLine = `${speakerName}: ${args.content}`;
+    const currentTranscript = session.transcript || "";
+    const newTranscript = currentTranscript ? `${currentTranscript}\n\n${newLine}` : newLine;
+
+    // 3. Update Session with BOTH
+    await ctx.db.patch(args.sessionId, {
+        messages: [...(session.messages || []), newMessage],
+        transcript: newTranscript
+    });
   },
 });
 

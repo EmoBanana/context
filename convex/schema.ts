@@ -24,6 +24,7 @@ export default defineSchema({
     maxScamValue: v.number(),
     startingTrust: v.number(),
     isPremium: v.boolean(),
+    vulnerabilities: v.optional(v.array(v.string())),
   }),
 
   items: defineTable({
@@ -43,13 +44,12 @@ export default defineSchema({
     trustLevel: v.number(),
     startTime: v.number(),
     endTime: v.optional(v.number()),
+    transcript: v.optional(v.string()), // Readable text format
+    messages: v.array(v.object({        // Structured data for UI/AI
+      role: v.string(), 
+      content: v.string(),
+      timestamp: v.number()
+    })),
   }).index("by_user_status", ["userId", "status"]),
-
-  messages: defineTable({
-    sessionId: v.id("sessions"),
-    role: v.string(), // "user", "assistant", "system"
-    content: v.string(),
-    metadata: v.optional(v.any()),
-  }).index("by_session", ["sessionId"]),
 });
 
