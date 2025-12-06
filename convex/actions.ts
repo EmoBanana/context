@@ -8,12 +8,14 @@ const apify = new ApifyClient({
   token: process.env.APIFY_API_TOKEN,
 });
 
+import { Id } from "./_generated/dataModel";
+
 // 1. generateNewTarget
 export const generateNewTarget = action({
   args: {
     urlOrText: v.string(),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Id<"personas">> => {
     console.log("🚀 generateNewTarget called with:", args.urlOrText);
     let rawData = args.urlOrText;
 
@@ -77,7 +79,7 @@ export const generateSuggestions = action({
   args: {
     sessionId: v.id("sessions"),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{ good: string; bad: string } | null> => {
     const session = await ctx.runQuery(internal.queries.getSession, { sessionId: args.sessionId });
     if (!session) return null;
 
@@ -99,7 +101,7 @@ export const sendChatMessage = action({
     sessionId: v.id("sessions"),
     content: v.string(),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{ reasoning: string } | undefined> => {
     // 1. Save User Message
     await ctx.runMutation(internal.internal.saveMessage, {
       sessionId: args.sessionId,
