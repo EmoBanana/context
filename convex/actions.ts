@@ -80,13 +80,13 @@ export const generateSuggestions = action({
     sessionId: v.id("sessions"),
   },
   handler: async (ctx, args): Promise<{ good: string; bad: string } | null> => {
-    const session = await ctx.runQuery(internal.queries.getSession, { sessionId: args.sessionId });
+    const session = await ctx.runQuery(api.queries.getSession, { sessionId: args.sessionId });
     if (!session) return null;
 
     // Check if game is still active before generating suggestions
     if (session.status !== "active") return null;
 
-    const messages = await ctx.runQuery(internal.queries.getMessages, { sessionId: args.sessionId });
+    const messages = await ctx.runQuery(api.queries.getMessages, { sessionId: args.sessionId });
 
     const suggestions = await ctx.runAction(internal.ai.getGeminiSuggestions, {
       chatHistory: messages.map(m => ({ role: m.role, content: m.content })),
@@ -110,13 +110,13 @@ export const sendChatMessage = action({
     });
 
     // 2. Fetch Context
-    const session = await ctx.runQuery(internal.queries.getSession, { sessionId: args.sessionId });
+    const session = await ctx.runQuery(api.queries.getSession, { sessionId: args.sessionId });
     if (!session || session.status !== "active") return;
 
     const persona = await ctx.runQuery(internal.queries.getPersona, { personaId: session.personaId });
     if (!persona) return;
 
-    const messages = await ctx.runQuery(internal.queries.getMessages, { sessionId: args.sessionId });
+    const messages = await ctx.runQuery(api.queries.getMessages, { sessionId: args.sessionId });
 
     // 3. AI Logic
 
@@ -126,7 +126,7 @@ export const sendChatMessage = action({
         sessionId: args.sessionId,
         trustChange: 100,
       });
-      await ctx.runMutation(internal.mutations.endSession, {
+      await ctx.runMutation(api.mutations.endSession, {
         sessionId: args.sessionId,
         finalAmount: persona.maxScamValue
       });
@@ -170,7 +170,7 @@ export const sendChatMessage = action({
       });
 
       // Trigger payout (This handles status update to "completed" and fund transfer)
-      await ctx.runMutation(internal.mutations.endSession, {
+      await ctx.runMutation(api.mutations.endSession, {
         sessionId: args.sessionId,
         finalAmount: judgeResult.agreedAmount || 0 // Pass the amount from the judge
       });
