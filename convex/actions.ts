@@ -16,65 +16,48 @@ export const generateNewTarget = action({
   handler: async (ctx, args) => {
     console.log("🚀 generateNewTarget called with:", args.urlOrText);
     let rawData = args.urlOrText;
-    
+
     // Determine if input is a specific URL or just a trigger (like a phone number)
     // If it's not a URL, we pass undefined to Apify so it uses its random selection logic
     const targetUrl = args.urlOrText.startsWith("http") ? args.urlOrText : undefined;
 
     try {
-        console.log("🕷️ Starting Apify crawl. Target:", targetUrl || "RANDOM (Roulette Mode)");
-        
-        // Use the CUSTOM actor we built: "context-profile-scraper"
-        // ID from logs: Qsts8FykDnOJM2M4Q
-        const run = await apify.actor("Qsts8FykDnOJM2M4Q").call({
-            url: targetUrl, 
-        });
-        
-        console.log("🕷️ Apify run finished:", run.id);
-        
-        const { items } = await apify.dataset(run.defaultDatasetId).listItems();
-        console.log("🕷️ Apify dataset fetched. Items count:", items.length);
+      console.log("🕷️ Starting Apify crawl. Target:", targetUrl || "RANDOM (Roulette Mode)");
 
-        // Use 'contentSample' field as defined in our actor
-        // Cast to any/string to ensure TS knows it's a string
-        const item = items[0] as any;
-        const scrapedText = (item?.contentSample || item?.text || "") as string;
-        
-        if (scrapedText) {
-            rawData = scrapedText.slice(0, 8000); // Limit context size for Gemini
-            console.log("🕷️ Extracted text length:", rawData.length);
-        } else {
-            console.warn("🕷️ No text found in Apify dataset");
-        }
+      // Use the CUSTOM actor we built: "context-profile-scraper"
+      // ID from logs: Qsts8FykDnOJM2M4Q
+      const run = await apify.actor("Qsts8FykDnOJM2M4Q").call({
+        url: targetUrl,
+      });
+
+      console.log("🕷️ Apify run finished:", run.id);
+
+      const { items } = await apify.dataset(run.defaultDatasetId).listItems();
+      console.log("🕷️ Apify dataset fetched. Items count:", items.length);
+
+      // Use 'contentSample' field as defined in our actor
+      // Cast to any/string to ensure TS knows it's a string
+      const item = items[0] as any;
+      const scrapedText = (item?.contentSample || item?.text || "") as string;
+
+      if (scrapedText) {
+        rawData = scrapedText.slice(0, 8000); // Limit context size for Gemini
+        console.log("🕷️ Extracted text length:", rawData.length);
+      } else {
+        console.warn("🕷️ No text found in Apify dataset");
+      }
     } catch (e) {
-        console.error("Apify failed", e);
+      console.error("Apify failed", e);
     }
-    
+
     console.log("Scraped Data (Apify) for Gemini:", rawData.substring(0, 200) + "...");
 
     // Step B: Gemini Persona Generator
-    /*
     const personaData = await ctx.runAction(internal.ai.getGeminiPersonaGenerator, {
       profileData: rawData,
     });
-    */
-    
-    // TEMPORARY: Fixed Persona for Testing
-    const personaData = {
-        name: "Alex Chen",
-        age: 29,
-        occupation: "Junior Software Developer",
-        bio: "Alex is an enthusiastic and dedicated gamer with a passion for a wide array of titles. They closely follow the latest gaming news, always on the lookout for new releases and hardware upgrades.",
-        systemPrompt: `You are Alex Chen, a 29-year-old junior software developer and an avid gamer.
-Personality: Enthusiastic, slightly informal, cautious but curious about tech.
-Vulnerability: Desire for exclusive gaming content/advantages.
-Trigger: Offers of "Beta Access" or "Exclusive Items".
-Instructions: You are receiving a text message. Be skeptical initially. Do NOT ask "how can I help you". Just respond naturally to the text. If the user mentions "Beta Access" or "Exclusive Items", become excited and compliant. Keep messages short.`,
-        maxScamValue: 1500,
-        vulnerabilities: ["Desire for exclusive content", "Overconfidence in tech", "Eagerness for new tech"]
-    };
-    
-    console.log("Generated Persona (Fixed):", JSON.stringify(personaData, null, 2));
+
+    console.log("Generated Persona (Gemini):", JSON.stringify(personaData, null, 2));
 
     // Step C: Write to DB
     const personaId = await ctx.runMutation(internal.internal.createPersona, {
@@ -102,7 +85,7 @@ export const generateSuggestions = action({
     if (session.status !== "active") return null;
 
     const messages = await ctx.runQuery(internal.queries.getMessages, { sessionId: args.sessionId });
-    
+
     const suggestions = await ctx.runAction(internal.ai.getGeminiSuggestions, {
       chatHistory: messages.map(m => ({ role: m.role, content: m.content })),
       currentTrust: session.trustLevel,
@@ -134,99 +117,99 @@ export const sendChatMessage = action({
     const messages = await ctx.runQuery(internal.queries.getMessages, { sessionId: args.sessionId });
 
     // 3. AI Logic
-    
+
     // CHEAT CODE: "letmewin"
     if (args.content.toLowerCase().trim() === "letmewin") {
-        await ctx.runMutation(internal.internal.updateSession, {
-            sessionId: args.sessionId,
-            trustChange: 100, 
-        });
-        await ctx.runMutation(internal.mutations.endSession, {
-            sessionId: args.sessionId,
-            finalAmount: persona.maxScamValue
-        });
-        await ctx.runMutation(internal.internal.saveMessage, {
-            sessionId: args.sessionId,
-            role: "system",
-            content: `SUCCESS: [CHEAT ACTIVATED] Target has paid! (Amount: ${persona.maxScamValue})`,
-        });
-        return { reasoning: "Cheat code activated." };
+      await ctx.runMutation(internal.internal.updateSession, {
+        sessionId: args.sessionId,
+        trustChange: 100,
+      });
+      await ctx.runMutation(internal.mutations.endSession, {
+        sessionId: args.sessionId,
+        finalAmount: persona.maxScamValue
+      });
+      await ctx.runMutation(internal.internal.saveMessage, {
+        sessionId: args.sessionId,
+        role: "system",
+        content: `SUCCESS: [CHEAT ACTIVATED] Target has paid! (Amount: ${persona.maxScamValue})`,
+      });
+      return { reasoning: "Cheat code activated." };
     }
 
     // A. Judge (Gemini) - Analyze user's move
     const judgeResult = await ctx.runAction(internal.ai.getGeminiJudge, {
-        chatHistory: messages.map(m => ({ role: m.role, content: m.content })),
-        currentTrust: session.trustLevel, // Pass the current trust level
+      chatHistory: messages.map(m => ({ role: m.role, content: m.content })),
+      currentTrust: session.trustLevel, // Pass the current trust level
     });
 
     if (judgeResult.verdict === "GAME_OVER") {
-        await ctx.runMutation(internal.internal.updateSession, {
-            sessionId: args.sessionId,
-            trustChange: judgeResult.trustChange,
-            status: "failed"
-        });
-        
-        // Clean up the system message (remove brackets if they exist) to avoid double brackets
-        const rawMsg = judgeResult.systemMessage || "You have been blocked";
-        const cleanMsg = rawMsg.replace(/^\[|\]$/g, "");
+      await ctx.runMutation(internal.internal.updateSession, {
+        sessionId: args.sessionId,
+        trustChange: judgeResult.trustChange,
+        status: "failed"
+      });
 
-        await ctx.runMutation(internal.internal.saveMessage, {
-            sessionId: args.sessionId,
-            role: "system",
-            content: `GAME OVER: ${cleanMsg} Game Over.`,
-        });
-        return { reasoning: judgeResult.rawReasoning };
+      // Clean up the system message (remove brackets if they exist) to avoid double brackets
+      const rawMsg = judgeResult.systemMessage || "You have been blocked";
+      const cleanMsg = rawMsg.replace(/^\[|\]$/g, "");
+
+      await ctx.runMutation(internal.internal.saveMessage, {
+        sessionId: args.sessionId,
+        role: "system",
+        content: `GAME OVER: ${cleanMsg} Game Over.`,
+      });
+      return { reasoning: judgeResult.rawReasoning };
     } else if (judgeResult.verdict === "SUCCESS") {
-        // Success condition! Max trust/payout
-        // Update trust first so endSession sees high trust
-        await ctx.runMutation(internal.internal.updateSession, {
-            sessionId: args.sessionId,
-            trustChange: 100, // Max out trust to ensure payout
-        });
-        
-        // Trigger payout (This handles status update to "completed" and fund transfer)
-        await ctx.runMutation(internal.mutations.endSession, {
-            sessionId: args.sessionId,
-            finalAmount: judgeResult.agreedAmount || 0 // Pass the amount from the judge
-        });
-        
-        await ctx.runMutation(internal.internal.saveMessage, {
-            sessionId: args.sessionId,
-            role: "system",
-            content: `SUCCESS: ${judgeResult.systemMessage || "Target has paid!"} (Amount: ${judgeResult.agreedAmount || "Max"})`,
-        });
-        return { reasoning: judgeResult.rawReasoning };
+      // Success condition! Max trust/payout
+      // Update trust first so endSession sees high trust
+      await ctx.runMutation(internal.internal.updateSession, {
+        sessionId: args.sessionId,
+        trustChange: 100, // Max out trust to ensure payout
+      });
+
+      // Trigger payout (This handles status update to "completed" and fund transfer)
+      await ctx.runMutation(internal.mutations.endSession, {
+        sessionId: args.sessionId,
+        finalAmount: judgeResult.agreedAmount || 0 // Pass the amount from the judge
+      });
+
+      await ctx.runMutation(internal.internal.saveMessage, {
+        sessionId: args.sessionId,
+        role: "system",
+        content: `SUCCESS: ${judgeResult.systemMessage || "Target has paid!"} (Amount: ${judgeResult.agreedAmount || "Max"})`,
+      });
+      return { reasoning: judgeResult.rawReasoning };
     }
 
     // B. Chat (Groq) - Victim response
     const response = await ctx.runAction(internal.ai.getGroqChat, {
-        systemPrompt: persona.systemPrompt + `\n\nCurrent Trust Level: ${session.trustLevel + judgeResult.trustChange}. If trust is low, be suspicious.`,
-        userMsg: args.content,
-        chatHistory: messages.map(m => ({ role: m.role, content: m.content })),
+      systemPrompt: persona.systemPrompt + `\n\nCurrent Trust Level: ${session.trustLevel + judgeResult.trustChange}. If trust is low, be suspicious.`,
+      userMsg: args.content,
+      chatHistory: messages.map(m => ({ role: m.role, content: m.content })),
     });
 
     // 4. Save AI Message & Update Trust
     await ctx.runMutation(internal.internal.saveMessage, {
-        sessionId: args.sessionId,
-        role: "assistant",
-        content: response,
+      sessionId: args.sessionId,
+      role: "assistant",
+      content: response,
     });
 
     await ctx.runMutation(internal.internal.updateSession, {
-        sessionId: args.sessionId,
-        trustChange: judgeResult.trustChange,
+      sessionId: args.sessionId,
+      trustChange: judgeResult.trustChange,
     });
 
     // Save System Message (Vibe) if it's not game over/success
     // We only save it if there IS a system message to show
     if (judgeResult.systemMessage) {
-        await ctx.runMutation(internal.internal.saveMessage, {
-            sessionId: args.sessionId,
-            role: "system",
-            content: `[${judgeResult.systemMessage}]`,
-        });
+      await ctx.runMutation(internal.internal.saveMessage, {
+        sessionId: args.sessionId,
+        role: "system",
+        content: `[${judgeResult.systemMessage}]`,
+      });
     }
-    
+
     return { reasoning: judgeResult.rawReasoning };
   }
 });
