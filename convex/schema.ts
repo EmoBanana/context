@@ -5,6 +5,7 @@ export default defineSchema({
   users: defineTable({
     tokenIdentifier: v.string(),
     username: v.string(),
+    password: v.string(),
     balanceAvailable: v.number(),
     balanceAllTime: v.number(),
     inventory: v.array(v.string()), // Array of item IDs
@@ -12,7 +13,8 @@ export default defineSchema({
       wins: v.number(),
       losses: v.number(),
     }),
-  }).index("by_token", ["tokenIdentifier"]),
+  }).index("by_token", ["tokenIdentifier"])
+    .index("by_username", ["username"]), // Add index for login lookup
 
   personas: defineTable({
     name: v.string(),
@@ -46,7 +48,7 @@ export default defineSchema({
     endTime: v.optional(v.number()),
     transcript: v.optional(v.string()), // Readable text format
     messages: v.array(v.object({        // Structured data for UI/AI
-      role: v.string(), 
+      role: v.string(),
       content: v.string(),
       timestamp: v.number()
     })),

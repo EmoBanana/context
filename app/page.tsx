@@ -6,12 +6,15 @@ import { api } from "@/convex/_generated/api";
 import { Lobby } from "@/components/Lobby";
 import { Store } from "@/components/Store";
 import { ChatInterface } from "@/components/ChatInterface";
-// Note: We skip Convex auth helpers to avoid requiring ConvexProviderWithAuth.
+// ... imports
+import { NeoBrutalismAuth } from "@/components/NeoBrutalismAuth";
 
 export default function Home() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [view, setView] = useState<"lobby" | "store" | "chat">("lobby");
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  const [suggestions, setSuggestions] = useState<{good: string, bad: string} | null>(null);
+  const [suggestions, setSuggestions] = useState<{ good: string, bad: string } | null>(null);
+  const [currentUser, setCurrentUser] = useState<any>(null);
 
   const isRealApi =
     typeof api?.queries?.getMyUser === "object" &&
@@ -19,17 +22,78 @@ export default function Home() {
     typeof api?.mutations?.startSession === "object";
 
   // Safe fallbacks when the Convex client hasn't been generated yet.
-  const user = useQuery(api.queries.getMyUser, isRealApi ? {} : "skip");
-  const items = useQuery(api.queries.getItems, isRealApi ? {} : "skip") || [];
-  
-  const ensureUser = isRealApi ? useMutation(api.mutations.ensureUser) : async () => null;
+  const userQuery = useQuery(api.queries.getUser, currentUser ? { userId: currentUser._id } : "skip");
 
-  // Auto-init user for dev
-  useEffect(() => {
-    if (isRealApi && ensureUser) {
-        ensureUser({ username: "Scammer" }).catch(e => console.error("Auto-user init failed", e));
+  // Prioritize the live query result if available, otherwise fallback to the snapshot
+  const user = userQuery || currentUser;
+
+  /* 
+   * FALLBACK ITEMS (Client-side)
+   * Used when the database is empty or connection fails.
+   */
+  const FALLBACK_ITEMS = [
+    {
+      _id: "client_1",
+      itemId: "tool_ai_voice",
+      name: "AI Voice Generation",
+      description: "Clone target's voice for vishing operations. Adds +20 Trust.",
+      cost: 500,
+      type: "tool"
+    },
+    {
+      _id: "client_2",
+      itemId: "tool_otp",
+      name: "OTP Interceptor",
+      description: "Bypass SMS 2FA protection. Critical for banking access.",
+      cost: 800,
+      type: "tool"
+    },
+    {
+      _id: "client_3",
+      itemId: "tool_trojan",
+      name: "Trojan PDF",
+      description: "Malware hidden in a document. Grants remote access.",
+      cost: 300,
+      type: "tool"
+    },
+    {
+      _id: "client_4",
+      itemId: "bait_invoice",
+      name: "Overdue Invoice",
+      description: "Generic urgency bait. Good for small business targets.",
+      cost: 100,
+      type: "tool"
+    },
+    {
+      _id: "client_5",
+      itemId: "bait_hospital",
+      name: "Fake Hospital Bill",
+      description: "High-stakes emotional bait. Very effective on elderly.",
+      cost: 150,
+      type: "tool"
+    },
+    {
+      _id: "client_6",
+      itemId: "bait_system",
+      name: "Fake System Warning",
+      description: "Scare tactic for tech support scams.",
+      cost: 200,
+      type: "tool"
     }
-  }, [isRealApi]); // Run once when API is ready
+  ];
+
+  const itemsQuery = useQuery(api.queries.getItems, isRealApi ? {} : "skip");
+  const items = (itemsQuery && itemsQuery.length > 0) ? itemsQuery : FALLBACK_ITEMS;
+
+
+  const seedItems = isRealApi ? useMutation(api.mutations.seedItems) : async () => null;
+
+  // Auto-seed items
+  useEffect(() => {
+    if (isRealApi && seedItems) {
+      seedItems();
+    }
+  }, [isRealApi]);
 
   const generateTarget = isRealApi
     ? useAction(api.actions.generateNewTarget)
@@ -48,75 +112,90 @@ export default function Home() {
     : async () => null;
 
   // Chat Data (Unconditional hooks with skip pattern)
-  const messages = useQuery(api.queries.getMessages, 
+  const messages = useQuery(api.queries.getMessages,
     (isRealApi && activeSessionId) ? { sessionId: activeSessionId as any } : "skip"
   ) || [];
-  
-  const session = useQuery(api.queries.getSession, 
+
+  const session = useQuery(api.queries.getSession,
     (isRealApi && activeSessionId) ? { sessionId: activeSessionId as any } : "skip"
   );
 
   // Handlers
   const handleStartChat = async (urlOrText: string) => {
     try {
-        console.log("Generating target...");
-        // In a real game, this might take time, so we should show loading
-        const personaId = await generateTarget({ urlOrText });
-        const sessionId = await startSession({ personaId: personaId as any });
-        setActiveSessionId(sessionId);
-        setView("chat");
+      console.log("Generating target...");
+      const personaId = await generateTarget({ urlOrText });
+      const sessionId = await startSession({ personaId: personaId as any, userId: user._id });
+      setActiveSessionId(sessionId);
+      setView("chat");
     } catch (e) {
-        console.error("Failed to start chat", e);
+      console.error("Failed to start chat", e);
     }
   };
 
   const handleBuy = async (itemId: string) => {
-    await buyItem({ itemId });
+    await buyItem({ itemId, userId: user?._id });
   };
 
   const handleSendMessage = async (text: string) => {
     if (activeSessionId) {
-        setSuggestions(null); // Clear previous suggestions
-        const result = await sendMessage({ sessionId: activeSessionId as any, content: text });
-        if (result && result.reasoning) {
-            console.log("🤖 AI Reasoning:", result.reasoning);
-        }
-        // Generate new suggestions after AI replies
-        // We catch error so it doesn't break the flow if suggestions fail
-        generateSuggestions({ sessionId: activeSessionId as any })
-            .then((s) => setSuggestions(s as any))
-            .catch((e) => console.error("Failed to generate suggestions", e));
+      setSuggestions(null); // Clear previous suggestions
+      const result = await sendMessage({ sessionId: activeSessionId as any, content: text });
+      if (result && result.reasoning) {
+        console.log("🤖 AI Reasoning:", result.reasoning);
+      }
+      generateSuggestions({ sessionId: activeSessionId as any })
+        .then((s) => setSuggestions(s as any))
+        .catch((e) => console.error("Failed to generate suggestions", e));
     }
   };
+
+  if (!isAuthenticated) {
+    return <NeoBrutalismAuth onLogin={(user) => {
+      setIsAuthenticated(true);
+      if (user) {
+        setCurrentUser(user);
+      }
+    }} />;
+  }
 
   return (
     <main className="min-h-screen bg-pastel-yellow font-sans">
       {view === "lobby" && (
-          <Lobby 
-              user={user} 
-              onStartChat={handleStartChat} 
-              onOpenStore={() => setView("store")} 
-          />
+        <Lobby
+          user={user}
+          onStartChat={handleStartChat}
+          onOpenStore={() => setView("store")}
+          onLogout={() => {
+            setIsAuthenticated(false);
+            setCurrentUser(null);
+          }}
+        />
       )}
 
       {view === "store" && (
-          <Store 
-              items={items} 
-              userBalance={user?.balanceAvailable || 0} 
-              onBuy={handleBuy} 
-              onClose={() => setView("lobby")} 
-          />
+        <Store
+          items={items}
+          userBalance={user?.balanceAvailable || 0}
+          onBuy={handleBuy}
+          onClose={() => setView("lobby")}
+          inventory={user?.inventory || []}
+          username={user?.username}
+        />
       )}
 
       {view === "chat" && (
-          <ChatInterface 
-              session={session} 
-              messages={messages as any} 
-              // suggestions={suggestions} // Disabled for demo
-              onSendMessage={handleSendMessage} 
-              onBack={() => setView("lobby")} 
-          />
+        <ChatInterface
+          session={session}
+          messages={messages as any}
+          // suggestions={suggestions} // Disabled for demo
+          onSendMessage={handleSendMessage}
+          onBack={() => setView("lobby")}
+          user={user}
+          items={items}
+        />
       )}
     </main>
   );
 }
+

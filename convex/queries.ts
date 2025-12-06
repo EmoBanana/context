@@ -16,11 +16,11 @@ export const getMessages = query({
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
     if (!session || !session.messages) return [];
-    
+
     // Map internal message objects to include an 'id' for the UI
     return session.messages.map((msg: any, index: number) => ({
-        ...msg,
-        id: `${msg.timestamp}-${index}` // Generate a unique key for React
+      ...msg,
+      id: `${msg.timestamp}-${index}` // Generate a unique key for React
     }));
   },
 });
@@ -44,9 +44,17 @@ export const getMyUser = query({
   },
 });
 
+export const getUser = query({
+  args: { userId: v.id("users") },
+  handler: async (ctx, args) => {
+    // Fetch user by ID for real-time updates
+    return await ctx.db.get(args.userId);
+  },
+});
+
 export const getItems = query({
-    handler: async (ctx) => {
-        return await ctx.db.query("items").collect();
-    }
+  handler: async (ctx) => {
+    return await ctx.db.query("items").collect();
+  }
 });
 

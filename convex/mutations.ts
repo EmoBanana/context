@@ -1,73 +1,17 @@
 import { mutation } from "./_generated/server";
 import { v } from "convex/values";
 
-export const ensureUser = mutation({
-  args: {
-    username: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    // 1. Check for authenticated user (production/standard flow)
-    const identity = await ctx.auth.getUserIdentity();
-    
-    // For development, we'll allow a "dev user" fallback if no auth is present
-    // BUT typically, Convex apps without auth setup just return null for identity.
-    // If we want to simulate a user for dev, we can key off something else or just create one.
-    
-    let tokenIdentifier = identity?.tokenIdentifier;
-    let name = identity?.name || args.username || "Anonymous Scammer";
 
-    if (!tokenIdentifier) {
-        // DEV MODE / NO AUTH FALLBACK
-        // We'll use a fixed token for a "guest" user to allow testing without Clerk/Auth0
-        tokenIdentifier = "guest_user_123";
-        console.log("Using guest identity for dev:", tokenIdentifier);
-    }
-
-    // 2. Find or Create User
-    let user = await ctx.db
-      .query("users")
-      .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenIdentifier))
-      .unique();
-
-    if (!user) {
-      user = {
-        tokenIdentifier,
-        username: name,
-        balanceAvailable: 1000, // Starting money
-        balanceAllTime: 0,
-        inventory: [],
-        stats: { wins: 0, losses: 0 },
-      };
-      // Insert and get the ID (though we don't need the ID if we just return the object, 
-      // but typically we want to return the user doc)
-      const id = await ctx.db.insert("users", user);
-      // We can fetch it back or construct it with _id
-      return { ...user, _id: id };
-    }
-
-    return user;
-  },
-});
 
 // startSession mutation (runs in default environment, not Node)
 export const startSession = mutation({
   args: {
     personaId: v.id("personas"),
+    userId: v.id("users"), // STRICT: Must pass userId
   },
   handler: async (ctx, args) => {
-    // MODIFIED: Use the ensureUser logic or just try to get user, handling the dev case
-    const identity = await ctx.auth.getUserIdentity();
-    let tokenIdentifier = identity?.tokenIdentifier;
-
-    if (!tokenIdentifier) {
-        // Fallback for dev testing if no auth provider is actively blocking us
-        tokenIdentifier = "guest_user_123";
-    }
-
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenIdentifier))
-      .unique();
+    // MODIFIED: Explicitly user userId, no more implicit auth fallback
+    const user = await ctx.db.get(args.userId);
 
     // If user doesn't exist even with fallback token, we should probably auto-create 
     // or tell the client to call 'ensureUser' first. 
@@ -95,19 +39,23 @@ export const startSession = mutation({
 export const buyItem = mutation({
   args: {
     itemId: v.string(),
+    userId: v.optional(v.id("users")), // Allow passing userId explicitly
   },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    let tokenIdentifier = identity?.tokenIdentifier;
-    
-    if (!tokenIdentifier) {
-         tokenIdentifier = "guest_user_123";
-    }
+    let user;
 
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenIdentifier))
-      .unique();
+    if (args.userId) {
+      user = await ctx.db.get(args.userId);
+    } else {
+      const identity = await ctx.auth.getUserIdentity();
+      let tokenIdentifier = identity?.tokenIdentifier;
+      if (!tokenIdentifier) tokenIdentifier = "guest_user_123";
+
+      user = await ctx.db
+        .query("users")
+        .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenIdentifier))
+        .unique();
+    }
 
     if (!user) throw new Error("User not found");
 
@@ -122,9 +70,7 @@ export const buyItem = mutation({
       throw new Error("Insufficient funds");
     }
 
-    if (user.inventory.includes(item.itemId)) {
-      throw new Error("Already owned");
-    }
+
 
     await ctx.db.patch(user._id, {
       balanceAvailable: user.balanceAvailable - item.cost,
@@ -146,18 +92,12 @@ export const endSession = mutation({
     if (!session) throw new Error("Session not found");
     if (session.status !== "active") return;
 
-    // ... (auth logic) ...
-    const identity = await ctx.auth.getUserIdentity();
-    let tokenIdentifier = identity?.tokenIdentifier;
-    if (!tokenIdentifier) tokenIdentifier = "guest_user_123"; 
-
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenIdentifier))
-      .unique();
+    // Use the userId from the session directly
+    // This avoids issues where ctx.auth is null (during internal calls or custom auth)
+    const user = await ctx.db.get(session.userId);
 
     if (!user) throw new Error("User not found");
-    
+
     // ...
 
     const persona = await ctx.db.get(session.personaId);
@@ -173,22 +113,22 @@ export const endSession = mutation({
       // Or let the user scam MORE if they negotiated well? 
       // Let's cap at maxScamValue unless the AI really messed up.
       // For now: If finalAmount is provided, use it. If it's 0 or null, use maxScamValue.
-      
+
       const askedAmount = args.finalAmount || 0;
       if (askedAmount > 0) {
-          payout = Math.min(askedAmount, persona.maxScamValue); // Cap it at persona limit
+        payout = Math.min(askedAmount, persona.maxScamValue); // Cap it at persona limit
       } else {
-          payout = persona.maxScamValue; // Default to full wallet
+        payout = persona.maxScamValue; // Default to full wallet
       }
-      
+
     } else if (session.trustLevel > 50) {
       newStatus = "completed";
       // Partial success logic
       const askedAmount = args.finalAmount || 0;
       if (askedAmount > 0) {
-          payout = Math.min(askedAmount, persona.maxScamValue * 0.5);
+        payout = Math.min(askedAmount, persona.maxScamValue * 0.5);
       } else {
-          payout = persona.maxScamValue * (session.trustLevel / 100);
+        payout = persona.maxScamValue * (session.trustLevel / 100);
       }
     }
 
@@ -197,7 +137,7 @@ export const endSession = mutation({
       fundScammed: payout,
       endTime: Date.now(),
     });
-    
+
     // ... (update user balance) ...
 
     if (payout > 0) {
@@ -219,5 +159,72 @@ export const endSession = mutation({
     }
 
     return { status: newStatus, payout };
+  },
+});
+
+// Seed Items mutation
+export const seedItems = mutation({
+  handler: async (ctx) => {
+    const items = [
+      {
+        itemId: "tool_ai_voice",
+        name: "AI Voice Generation",
+        description: "Clone target's voice for vishing operations. Adds +20 Trust.",
+        cost: 500,
+        type: "tool",
+        assetData: "icon_mic",
+      },
+      {
+        itemId: "tool_otp",
+        name: "OTP Interceptor",
+        description: "Bypass SMS 2FA protection. Critical for banking access.",
+        cost: 800,
+        type: "tool",
+        assetData: "icon_smartphone",
+      },
+      {
+        itemId: "tool_trojan",
+        name: "Trojan PDF",
+        description: "Malware hidden in a document. Grants remote access.",
+        cost: 300,
+        type: "tool",
+        assetData: "icon_file",
+      },
+      {
+        itemId: "bait_invoice",
+        name: "Overdue Invoice",
+        description: "Generic urgency bait. Good for small business targets.",
+        cost: 100,
+        type: "tool",
+        assetData: "icon_alert",
+      },
+      {
+        itemId: "bait_hospital",
+        name: "Fake Hospital Bill",
+        description: "High-stakes emotional bait. Very effective on elderly.",
+        cost: 150,
+        type: "tool",
+        assetData: "icon_health",
+      },
+      {
+        itemId: "bait_system",
+        name: "Fake System Warning",
+        description: "Scare tactic for tech support scams.",
+        cost: 200,
+        type: "tool",
+        assetData: "icon_warning",
+      }
+    ];
+
+    for (const item of items) {
+      const existing = await ctx.db
+        .query("items")
+        .withIndex("by_itemId", (q) => q.eq("itemId", item.itemId))
+        .unique();
+
+      if (!existing) {
+        await ctx.db.insert("items", item);
+      }
+    }
   },
 });
