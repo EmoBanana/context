@@ -3,14 +3,18 @@
     "type": "object",
     "schemaVersion": 1,
     "properties": {
-        "startUrls": {
-            "title": "Start URLs",
-            "type": "array",
-            "description": "URLs to scrape for profile data.",
-            "editor": "requestListSources",
-            "prefill": [{ "url": "https://example.com" }]
+        "url": {
+            "title": "Direct URL",
+            "type": "string",
+            "description": "Specific URL to scrape (overrides random selection)",
+            "editor": "textfield"
+        },
+        "category": {
+            "title": "Category",
+            "type": "string",
+            "description": "Persona category",
+            "editor": "textfield"
         }
     },
-    "required": ["startUrls"]
+    "required": []
 }
-

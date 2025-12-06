@@ -14,35 +14,43 @@ export const generateNewTarget = action({
     urlOrText: v.string(),
   },
   handler: async (ctx, args) => {
+    console.log("🚀 generateNewTarget called with:", args.urlOrText);
     let rawData = args.urlOrText;
+    
+    // Determine if input is a specific URL or just a trigger (like a phone number)
+    // If it's not a URL, we pass undefined to Apify so it uses its random selection logic
+    const targetUrl = args.urlOrText.startsWith("http") ? args.urlOrText : undefined;
 
-    // Step A: Apify Scraping (Simplified)
-    if (args.urlOrText.startsWith("http")) {
-      try {
-        // Example: scraping a LinkedIn profile or general text extraction
-        // Using a generic web scraper actor for now, or just assuming text if it fails
-        // For simulation, we'll try to just pass the URL or fetch it.
-        // In a real app, we'd use a specific Actor.
-        // We'll skip complex Apify implementation and assume rawData is sufficient or extracted via a simple fetch if Apify is overkill for this specific mock,
-        // BUT the prompt says "Use apify-client".
-        // I'll assume a theoretical "web-scraper" actor run.
-        /*
-        const run = await apify.actor("apify/website-content-crawler").call({
-            startUrls: [{ url: args.urlOrText }],
-            maxCrawlPages: 1,
+    try {
+        console.log("🕷️ Starting Apify crawl. Target:", targetUrl || "RANDOM (Roulette Mode)");
+        
+        // Use the CUSTOM actor we built: "context-profile-scraper"
+        // ID from logs: Qsts8FykDnOJM2M4Q
+        const run = await apify.actor("Qsts8FykDnOJM2M4Q").call({
+            url: targetUrl, 
         });
+        
+        console.log("🕷️ Apify run finished:", run.id);
+        
         const { items } = await apify.dataset(run.defaultDatasetId).listItems();
-        rawData = items[0]?.text || args.urlOrText;
-        */
-       // For this environment, I'll just skip the actual Apify call to avoid needing a real token for the test,
-       // unless I have one. I'll just pass the text through or fake it.
-       // However, I must write the code.
-      } catch (e) {
+        console.log("🕷️ Apify dataset fetched. Items count:", items.length);
+
+        // Use 'contentSample' field as defined in our actor
+        // Cast to any/string to ensure TS knows it's a string
+        const item = items[0] as any;
+        const scrapedText = (item?.contentSample || item?.text || "") as string;
+        
+        if (scrapedText) {
+            rawData = scrapedText.slice(0, 8000); // Limit context size for Gemini
+            console.log("🕷️ Extracted text length:", rawData.length);
+        } else {
+            console.warn("🕷️ No text found in Apify dataset");
+        }
+    } catch (e) {
         console.error("Apify failed", e);
-      }
     }
     
-    console.log("Scraped Data (Apify):", rawData);
+    console.log("Scraped Data (Apify) for Gemini:", rawData.substring(0, 200) + "...");
 
     // Step B: Gemini Persona Generator
     const personaData = await ctx.runAction(internal.ai.getGeminiPersonaGenerator, {

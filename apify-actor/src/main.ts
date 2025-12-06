@@ -41,6 +41,7 @@ const SOURCE_POOLS = {
 
 interface Input {
     category?: keyof typeof SOURCE_POOLS; 
+    url?: string;
 }
 
 await Actor.init();
@@ -52,21 +53,41 @@ const input = (await Actor.getInput<Input>()) ?? {} as Input;
 const categories = Object.keys(SOURCE_POOLS) as (keyof typeof SOURCE_POOLS)[];
 const selectedCategory = input.category || categories[Math.floor(Math.random() * categories.length)];
 
-// Pick a random URL from that category
+// Pick a random URL from that category, UNLESS a specific URL is provided
 const urls = SOURCE_POOLS[selectedCategory];
-const startUrl = urls[Math.floor(Math.random() * urls.length)];
+const startUrl = input.url || urls[Math.floor(Math.random() * urls.length)];
 
 console.log(`🎰 ROULETTE RESULT: Generating [${selectedCategory}] persona from [${startUrl}]`);
 
 const crawler = new CheerioCrawler({
     // Limit to 2 requests: 1 for the List Page, 1 for the Detail Page
-    maxRequestsPerCrawl: 2,
+    maxRequestsPerCrawl: 5,
+    
+    // Auto-retry on error (e.g. 404)
+    maxRequestRetries: 2,
+
+    errorHandler: async ({ request, log }) => {
+        log.warning(`⚠️ Request failed: ${request.url}`);
+    },
     
     requestHandler: async ({ $, request, enqueueLinks, log }) => {
         const label = request.userData.label;
 
+        // IMPORTANT: If a specific URL was provided as input, treat it as a DETAIL page immediately
+        // This bypasses the list scanning logic
+        const isDirectTarget = !!input.url && request.url === input.url;
+
+        if (isDirectTarget && !label) {
+             log.info(`🎯 Direct target detected: ${request.url}`);
+             // Re-route to detail logic by setting label (or just fall through if structure allows)
+             // We'll just set the label for the next logic block to pick it up? 
+             // Actually, requestHandler is called once per request. We can't change label mid-flight easily without re-enqueuing.
+             // BETTER: Just modify the condition below.
+        }
+
         // STEP A: THE LIST PAGE (e.g., The News Feed)
-        if (!label) {
+        // Only run this if it's NOT a detail page AND NOT a direct user URL we want to scrape directly
+        if (!label && !isDirectTarget) {
             log.info(`👀 Scanning feed: ${request.url}`);
             
             // Extract all viable links to articles/posts
@@ -76,18 +97,44 @@ const crawler = new CheerioCrawler({
                 const href = $(el).attr('href');
                 const text = $(el).text().trim();
                 // Filter: Must have decent text length (not "Home" or "Login")
-                if (href && text.length > 15 && !href.includes('login') && !href.includes('signup')) {
+                // AND must be a real link (not # or javascript)
+                if (
+                    href && 
+                    text.length > 15 && 
+                    !href.includes('login') && 
+                    !href.includes('signup') &&
+                    !href.startsWith('#') &&
+                    !href.startsWith('javascript')
+                ) {
                     validLinks.push(href);
                 }
             });
 
             // THE MAGIC: Pick ONE random link to drill down into
             if (validLinks.length > 0) {
-                const randomLink = validLinks[Math.floor(Math.random() * validLinks.length)];
-                log.info(`🎲 Randomly selected article: ${randomLink}`);
+                // Try up to 3 times to find a valid link if one fails? 
+                // Actually, we just enqueue one. If it fails (404), the crawler stops if maxRequests is low.
+                // We should enqueue a few candidates just in case? 
+                // Let's enqueue 3 candidates. Crawlee will visit the first one. If it fails, it might try others if we configured it right?
+                // No, Crawlee visits all in queue.
+                
+                // Better strategy: Pick one. 
+                // But if we want redundancy, we can pick 2-3.
+                // Since we set maxRequestsPerCrawl to 5, we can enqueue 3.
+                // The first one to return data "wins" (pushes dataset).
+                
+                const candidates = [];
+                for (let i = 0; i < 3; i++) {
+                    if (validLinks.length === 0) break;
+                    const idx = Math.floor(Math.random() * validLinks.length);
+                    candidates.push(validLinks[idx]);
+                    validLinks.splice(idx, 1); // Remove to avoid duplicates
+                }
+                
+                log.info(`🎲 Enqueuing ${candidates.length} candidate articles for resilience: ${candidates.join(', ')}`);
                 
                 await enqueueLinks({
-                    urls: [randomLink],
+                    urls: candidates,
                     userData: { label: 'DETAIL' }, // Mark this as the target page
                     strategy: 'same-domain',
                 });
@@ -95,7 +142,7 @@ const crawler = new CheerioCrawler({
         } 
         
         // STEP B: THE DETAIL PAGE (The Persona Source)
-        else if (label === 'DETAIL') {
+        else if (label === 'DETAIL' || isDirectTarget) {
             log.info(`📝 Scraping context from: ${request.url}`);
 
             const title = $('title').text().trim();

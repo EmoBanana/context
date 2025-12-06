@@ -39,17 +39,28 @@ const input = (await Actor.getInput()) ?? {};
 // If no category provided, pick a random one
 const categories = Object.keys(SOURCE_POOLS);
 const selectedCategory = input.category || categories[Math.floor(Math.random() * categories.length)];
-// Pick a random URL from that category
+// Pick a random URL from that category, UNLESS a specific URL is provided
 const urls = SOURCE_POOLS[selectedCategory];
-const startUrl = urls[Math.floor(Math.random() * urls.length)];
+const startUrl = input.url || urls[Math.floor(Math.random() * urls.length)];
 console.log(`🎰 ROULETTE RESULT: Generating [${selectedCategory}] persona from [${startUrl}]`);
 const crawler = new CheerioCrawler({
     // Limit to 2 requests: 1 for the List Page, 1 for the Detail Page
     maxRequestsPerCrawl: 2,
     requestHandler: async ({ $, request, enqueueLinks, log }) => {
         const label = request.userData.label;
+        // IMPORTANT: If a specific URL was provided as input, treat it as a DETAIL page immediately
+        // This bypasses the list scanning logic
+        const isDirectTarget = !!input.url && request.url === input.url;
+        if (isDirectTarget && !label) {
+            log.info(`🎯 Direct target detected: ${request.url}`);
+            // Re-route to detail logic by setting label (or just fall through if structure allows)
+            // We'll just set the label for the next logic block to pick it up? 
+            // Actually, requestHandler is called once per request. We can't change label mid-flight easily without re-enqueuing.
+            // BETTER: Just modify the condition below.
+        }
         // STEP A: THE LIST PAGE (e.g., The News Feed)
-        if (!label) {
+        // Only run this if it's NOT a detail page AND NOT a direct user URL we want to scrape directly
+        if (!label && !isDirectTarget) {
             log.info(`👀 Scanning feed: ${request.url}`);
             // Extract all viable links to articles/posts
             // We look for common patterns to avoid footer links/ads
@@ -74,7 +85,7 @@ const crawler = new CheerioCrawler({
             }
         }
         // STEP B: THE DETAIL PAGE (The Persona Source)
-        else if (label === 'DETAIL') {
+        else if (label === 'DETAIL' || isDirectTarget) {
             log.info(`📝 Scraping context from: ${request.url}`);
             const title = $('title').text().trim();
             // Intelligent text extraction (h1 + paragraphs)
